@@ -91,7 +91,7 @@ class MorseDecoder {
     }
     
     init() {
-        this.startBtn.addEventListener('click', () => this.startCamera());
+        this.startBtn.addEventListener('click', () => this.toggleCamera());
         this.detectBtn.addEventListener('click', () => this.toggleDetection());
         this.clearBtn.addEventListener('click', () => this.clearResults());
         
@@ -184,7 +184,6 @@ class MorseDecoder {
             this.updateCameraInfo();
             this.status.textContent = `摄像头已就绪，可以开始检测`;
             this.startBtn.textContent = '关闭摄像头';
-            this.startBtn.onclick = () => this.stopCamera();
             this.startBtn.disabled = false;
             this.detectBtn.disabled = false;
             
@@ -200,16 +199,35 @@ class MorseDecoder {
             this.stopDetection();
         }
         
+        // 停止所有媒体轨道
         if (this.stream) {
-            this.stream.getTracks().forEach(track => track.stop());
+            this.stream.getTracks().forEach(track => {
+                track.stop();
+                console.log('Stopped track:', track.kind, track.readyState);
+            });
             this.stream = null;
         }
         
+        // 清除视频源并强制刷新
         this.video.srcObject = null;
+        this.video.load(); // 强制重新加载视频元素
+        
+        // 清除canvas内容
+        if (this.ctx) {
+            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        }
+        
         this.status.textContent = '摄像头已关闭';
         this.startBtn.textContent = '开启摄像头';
-        this.startBtn.onclick = () => this.startCamera();
         this.detectBtn.disabled = true;
+        
+        // 清除摄像头信息显示
+        if (this.cameraInfo) {
+            this.cameraInfo.textContent = '分辨率: - | 帧率: - FPS';
+        }
+        if (this.thresholdInfo) {
+            this.thresholdInfo.textContent = '阈值: - | 亮度范围: -';
+        }
     }
     
     toggleDetection() {
@@ -555,6 +573,14 @@ class MorseDecoder {
         const message = this.messageQueue.shift();
         this.pendingMessages.set(message.messageId, message);
         this.worker.postMessage(message);
+    }
+    
+    toggleCamera() {
+        if (this.stream) {
+            this.stopCamera();
+        } else {
+            this.startCamera();
+        }
     }
     
     cleanup() {
