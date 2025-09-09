@@ -2,7 +2,7 @@ class MorseDecoder {
     constructor() {
         this.video = document.getElementById('video');
         this.canvas = document.getElementById('canvas');
-        this.ctx = this.canvas.getContext('2d');
+        this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
         this.startBtn = document.getElementById('startBtn');
         this.detectBtn = document.getElementById('detectBtn');
         this.clearBtn = document.getElementById('clearBtn');
@@ -10,6 +10,7 @@ class MorseDecoder {
         this.morseOutput = document.getElementById('morseOutput');
         this.textOutput = document.getElementById('textOutput');
         this.cameraInfo = document.getElementById('cameraInfo');
+        this.thresholdInfo = document.getElementById('thresholdInfo');
         
         this.isDetecting = false;
         this.stream = null;
@@ -28,7 +29,12 @@ class MorseDecoder {
         this.currentFps = 0;
         this.maxLightStates = 200;
         this.frameSkipCounter = 0;
-        this.frameSkipInterval = 2;
+        this.frameSkipInterval = 1;
+        this.worker = null;
+        this.messageQueue = [];
+        this.pendingMessages = new Map();
+        this.messageId = 0;
+        this.initWorker();
         
         this.morseTable = {
             '.-': 'A', '-...': 'B', '-.-.': 'C', '-..': 'D', '.': 'E',
@@ -45,6 +51,45 @@ class MorseDecoder {
         this.init();
     }
     
+    initWorker() {
+        try {
+            this.worker = new Worker('detection-worker.js');
+            this.worker.onmessage = (e) => {
+                const { type, data, messageId } = e.data;
+                
+                // 移除待处理消息
+                if (messageId && this.pendingMessages.has(messageId)) {
+                    this.pendingMessages.delete(messageId);
+                }
+                
+                switch (type) {
+                    case 'BRIGHTNESS_RESULT':
+                        this.handleBrightnessResult(data);
+                        break;
+                    case 'SIGNAL_RESULT':
+                        this.handleSignalResult(data);
+                        break;
+                    case 'RESULTS_CLEARED':
+                        break;
+                    default:
+                        console.warn('Unknown worker response:', type);
+                }
+                
+                // 处理队列中的下一条消息
+                this.processMessageQueue();
+            };
+            
+            this.worker.onerror = (error) => {
+                console.error('Worker error:', error);
+                this.pendingMessages.clear();
+                this.messageQueue = [];
+            };
+        } catch (error) {
+            console.warn('Web Workers not supported, falling back to main thread');
+            this.worker = null;
+        }
+    }
+    
     init() {
         this.startBtn.addEventListener('click', () => this.startCamera());
         this.detectBtn.addEventListener('click', () => this.toggleDetection());
@@ -59,6 +104,22 @@ class MorseDecoder {
         document.getElementById('focusDistance').addEventListener('change', () => {
             if (this.stream) {
                 this.restartCamera();
+            }
+        });
+        
+        document.getElementById('autoThreshold').addEventListener('change', (e) => {
+            const enabled = e.target.checked;
+            document.getElementById('threshold').disabled = enabled;
+            if (this.worker) {
+                this.sendToWorker('SET_AUTO_THRESHOLD', { enabled: enabled });
+            }
+        });
+        
+        document.getElementById('thresholdOffset').addEventListener('input', (e) => {
+            const offset = parseInt(e.target.value);
+            document.getElementById('offsetValue').textContent = offset;
+            if (this.worker) {
+                this.sendToWorker('SET_THRESHOLD_OFFSET', { offset: offset });
             }
         });
         
@@ -173,6 +234,8 @@ class MorseDecoder {
         this.frameCount = 0;
         this.lastFpsTime = Date.now();
         this.frameSkipCounter = 0;
+        
+        document.getElementById('threshold').disabled = document.getElementById('autoThreshold').checked;
         this.detectLED();
     }
     
@@ -200,6 +263,12 @@ class MorseDecoder {
         }
         this.frameSkipCounter = 0;
         
+        // 限制待处理消息数量，避免积压
+        if (this.pendingMessages.size > 5) {
+            this.animationFrame = requestAnimationFrame(() => this.detectLED());
+            return;
+        }
+        
         const centerX = Math.floor(this.canvas.width / 2);
         const centerY = Math.floor(this.canvas.height / 2);
         const radius = Math.min(parseInt(document.getElementById('sensitivity').value), 15);
@@ -207,8 +276,23 @@ class MorseDecoder {
         
         this.ctx.drawImage(this.video, centerX - radius, centerY - radius, radius * 2, radius * 2, 0, 0, radius * 2, radius * 2);
         const imageData = this.ctx.getImageData(0, 0, radius * 2, radius * 2);
-        const data = imageData.data;
         
+        if (this.worker) {
+            const autoThreshold = document.getElementById('autoThreshold').checked;
+            this.sendToWorker('CALCULATE_BRIGHTNESS', {
+                imageData: imageData,
+                threshold: threshold,
+                autoThreshold: autoThreshold
+            });
+        } else {
+            this.fallbackDetection(imageData, threshold);
+        }
+        
+        this.animationFrame = requestAnimationFrame(() => this.detectLED());
+    }
+    
+    fallbackDetection(imageData, threshold) {
+        const data = imageData.data;
         let totalBrightness = 0;
         let pixelCount = 0;
         
@@ -223,7 +307,20 @@ class MorseDecoder {
         
         const avgBrightness = totalBrightness / (pixelCount * 3);
         const isLightOn = avgBrightness > threshold;
+        
+        this.handleBrightnessResult({
+            brightness: Math.round(avgBrightness),
+            isLightOn: isLightOn
+        });
+    }
+    
+    handleBrightnessResult(result) {
+        const { brightness, isLightOn, adaptiveThreshold, historyStats } = result;
         const currentTime = Date.now();
+        
+        if (adaptiveThreshold !== undefined) {
+            this.updateThresholdInfo(adaptiveThreshold, historyStats);
+        }
         
         if (this.lightStates.length === 0) {
             this.lightStates.push({ state: isLightOn, startTime: currentTime });
@@ -234,13 +331,19 @@ class MorseDecoder {
                 this.lightStates.push({ state: isLightOn, startTime: currentTime });
                 
                 if (this.lightStates.length > this.maxLightStates) {
-                    const keepCount = Math.floor(this.maxLightStates / 3);
-                    this.lightStates = this.lightStates.slice(-keepCount);
-                    this.realtimeMorse = '';
-                    this.currentLetter = '';
+                    this.cleanupLightStatesMain();
                 }
                 
-                this.processRealtimeSignals();
+                if (this.worker) {
+                    const dotLength = parseInt(document.getElementById('dotLength').value);
+                    this.sendToWorker('PROCESS_SIGNAL', {
+                        isLightOn: isLightOn,
+                        currentTime: currentTime,
+                        dotLength: dotLength
+                    });
+                } else {
+                    this.processRealtimeSignals();
+                }
             }
         }
         
@@ -254,10 +357,14 @@ class MorseDecoder {
         }
         
         if (this.frameCount % 10 === 0) {
-            this.status.textContent = `检测中... 亮度: ${Math.round(avgBrightness)} (${isLightOn ? '亮' : '暗'})`;
+            this.status.textContent = `检测中... 亮度: ${brightness} (${isLightOn ? '亮' : '暗'})`;
         }
-        
-        this.animationFrame = requestAnimationFrame(() => this.detectLED());
+    }
+    
+    handleSignalResult(result) {
+        const { morse, text } = result;
+        this.morseOutput.textContent = morse;
+        this.textOutput.textContent = text;
     }
     
     processRealtimeSignals() {
@@ -385,6 +492,11 @@ class MorseDecoder {
         this.frameCount = 0;
         this.lastFpsTime = Date.now();
         this.currentFps = 0;
+        
+        if (this.worker) {
+            this.sendToWorker('CLEAR_RESULTS', {});
+        }
+        
         this.morseOutput.textContent = '莫斯电码将显示在这里';
         this.textOutput.textContent = '解码文本将显示在这里';
     }
@@ -405,8 +517,80 @@ class MorseDecoder {
         }
     }
     
+    updateThresholdInfo(adaptiveThreshold, stats) {
+        if (this.thresholdInfo) {
+            const autoMode = document.getElementById('autoThreshold').checked;
+            const currentThreshold = autoMode ? adaptiveThreshold : document.getElementById('threshold').value;
+            const range = stats ? `${stats.min}-${stats.max} (平均${stats.avg})` : '-';
+            const mode = autoMode ? '自适应' : '手动';
+            this.thresholdInfo.textContent = `阈值: ${currentThreshold} (${mode}) | 亮度范围: ${range}`;
+        }
+    }
+    
+    sendToWorker(type, data) {
+        if (!this.worker) return;
+        
+        const messageId = ++this.messageId;
+        const message = { type, data, messageId };
+        
+        // 对于高频消息（亮度计算），直接发送，但限制待处理数量
+        if (type === 'CALCULATE_BRIGHTNESS') {
+            if (this.pendingMessages.size < 3) {
+                this.pendingMessages.set(messageId, message);
+                this.worker.postMessage(message);
+            }
+            // 超出限制则丢弃该帧，保持实时性
+            return;
+        }
+        
+        // 其他消息加入队列
+        this.messageQueue.push(message);
+        this.processMessageQueue();
+    }
+    
+    processMessageQueue() {
+        if (this.messageQueue.length === 0 || !this.worker) return;
+        
+        // 一次处理一条非亮度计算消息
+        const message = this.messageQueue.shift();
+        this.pendingMessages.set(message.messageId, message);
+        this.worker.postMessage(message);
+    }
+    
     cleanup() {
+        if (this.worker) {
+            this.worker.terminate();
+            this.worker = null;
+        }
+        this.messageQueue = [];
+        this.pendingMessages.clear();
         this.stopCamera();
+    }
+    
+    cleanupLightStatesMain() {
+        // 只清理过期的lightStates，保留莫斯电码结果
+        const tenSecondsAgo = Date.now() - 10000;
+        let cleanupIndex = 0;
+        
+        // 找到10秒前的数据位置
+        for (let i = 0; i < this.lightStates.length - 1; i++) {
+            if (this.lightStates[i].startTime > tenSecondsAgo) {
+                cleanupIndex = i;
+                break;
+            }
+        }
+        
+        // 清理过期数据
+        if (cleanupIndex > 0) {
+            this.lightStates = this.lightStates.slice(cleanupIndex);
+        }
+        
+        // 如果仍然太大，保留最近的一半数据
+        if (this.lightStates.length > this.maxLightStates) {
+            const keepCount = Math.floor(this.maxLightStates / 2);
+            this.lightStates = this.lightStates.slice(-keepCount);
+            // 不清除 realtimeMorse 和 currentLetter
+        }
     }
 }
 
