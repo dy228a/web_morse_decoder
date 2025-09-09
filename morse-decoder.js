@@ -54,8 +54,8 @@ class MorseDecoder {
             const constraints = {
                 video: {
                     facingMode: { ideal: 'environment' },
-                    width: { ideal: 1280, max: 1920 },
-                    height: { ideal: 720, max: 1080 }
+                    width: { ideal: 640, max: 800 },
+                    height: { ideal: 480, max: 600 }
                 },
                 audio: false
             };
@@ -67,8 +67,8 @@ class MorseDecoder {
                 const frontConstraints = {
                     video: {
                         facingMode: 'user',
-                        width: { ideal: 1280, max: 1920 },
-                        height: { ideal: 720, max: 1080 }
+                        width: { ideal: 640, max: 800 },
+                        height: { ideal: 480, max: 600 }
                     },
                     audio: false
                 };
@@ -163,12 +163,13 @@ class MorseDecoder {
         let totalBrightness = 0;
         let pixelCount = 0;
         
-        for (let x = centerX - radius; x <= centerX + radius; x++) {
-            for (let y = centerY - radius; y <= centerY + radius; y++) {
+        const step = 2;
+        for (let x = centerX - radius; x <= centerX + radius; x += step) {
+            for (let y = centerY - radius; y <= centerY + radius; y += step) {
                 if ((x - centerX) ** 2 + (y - centerY) ** 2 <= radius ** 2) {
                     const imageData = this.ctx.getImageData(x, y, 1, 1);
                     const [r, g, b] = imageData.data;
-                    const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+                    const brightness = (r + g + b) / 3;
                     totalBrightness += brightness;
                     pixelCount++;
                 }
@@ -192,7 +193,9 @@ class MorseDecoder {
         
         this.status.textContent = `检测中... 亮度: ${Math.round(avgBrightness)} (${isLightOn ? '亮' : '暗'})`;
         
-        this.animationFrame = requestAnimationFrame(() => this.detectLED());
+        setTimeout(() => {
+            this.animationFrame = requestAnimationFrame(() => this.detectLED());
+        }, 50);
     }
     
     processRealtimeSignals() {
