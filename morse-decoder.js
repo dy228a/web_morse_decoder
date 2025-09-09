@@ -47,6 +47,18 @@ class MorseDecoder {
         this.detectBtn.addEventListener('click', () => this.toggleDetection());
         this.clearBtn.addEventListener('click', () => this.clearResults());
         
+        document.getElementById('exposureTime').addEventListener('change', () => {
+            if (this.stream) {
+                this.restartCamera();
+            }
+        });
+        
+        document.getElementById('focusDistance').addEventListener('change', () => {
+            if (this.stream) {
+                this.restartCamera();
+            }
+        });
+        
         window.addEventListener('beforeunload', () => this.cleanup());
     }
     
@@ -55,11 +67,21 @@ class MorseDecoder {
             this.startBtn.disabled = true;
             this.status.textContent = '正在启动摄像头...';
             
+            const exposureTime = parseInt(document.getElementById('exposureTime').value);
+            const focusDistance = parseInt(document.getElementById('focusDistance').value) / 100;
+            
             const constraints = {
                 video: {
                     facingMode: { ideal: 'environment' },
                     width: { ideal: 320, max: 480 },
-                    height: { ideal: 240, max: 360 }
+                    height: { ideal: 240, max: 360 },
+                    advanced: [{
+                        exposureMode: { exact: 'manual' },
+                        exposureTime: { ideal: exposureTime },
+                        focusMode: { exact: 'manual' },
+                        focusDistance: { ideal: focusDistance },
+                        whiteBalanceMode: { exact: 'manual' }
+                    }]
                 },
                 audio: false
             };
@@ -72,7 +94,14 @@ class MorseDecoder {
                     video: {
                         facingMode: 'user',
                         width: { ideal: 320, max: 480 },
-                        height: { ideal: 240, max: 360 }
+                        height: { ideal: 240, max: 360 },
+                        advanced: [{
+                            exposureMode: { exact: 'manual' },
+                            exposureTime: { ideal: exposureTime },
+                            focusMode: { exact: 'manual' },
+                            focusDistance: { ideal: focusDistance },
+                            whiteBalanceMode: { exact: 'manual' }
+                        }]
                     },
                     audio: false
                 };
@@ -339,9 +368,19 @@ class MorseDecoder {
         this.textOutput.textContent = '解码文本将显示在这里';
     }
     
+    async restartCamera() {
+        if (this.isDetecting) {
+            this.stopDetection();
+        }
+        this.stopCamera();
+        await this.startCamera();
+    }
+    
     updateCameraInfo() {
         if (this.cameraInfo && this.video.videoWidth) {
-            this.cameraInfo.textContent = `分辨率: ${this.video.videoWidth}x${this.video.videoHeight} | 帧率: ${this.currentFps} FPS`;
+            const exposureTime = document.getElementById('exposureTime').value;
+            const focusDistance = document.getElementById('focusDistance').value;
+            this.cameraInfo.textContent = `分辨率: ${this.video.videoWidth}x${this.video.videoHeight} | 帧率: ${this.currentFps} FPS | 曝光: ${exposureTime}μs | 对焦: ${focusDistance}%`;
         }
     }
     
