@@ -9,6 +9,7 @@ class MorseDecoder {
         this.status = document.getElementById('status');
         this.morseOutput = document.getElementById('morseOutput');
         this.textOutput = document.getElementById('textOutput');
+        this.cameraInfo = document.getElementById('cameraInfo');
         
         this.isDetecting = false;
         this.stream = null;
@@ -22,6 +23,9 @@ class MorseDecoder {
         this.realtimeMorse = '';
         this.lastUpdateTime = 0;
         this.processingBuffer = [];
+        this.frameCount = 0;
+        this.lastFpsTime = Date.now();
+        this.currentFps = 0;
         
         this.morseTable = {
             '.-': 'A', '-...': 'B', '-.-.': 'C', '-..': 'D', '.': 'E',
@@ -54,8 +58,8 @@ class MorseDecoder {
             const constraints = {
                 video: {
                     facingMode: { ideal: 'environment' },
-                    width: { ideal: 640, max: 800 },
-                    height: { ideal: 480, max: 600 }
+                    width: { ideal: 320, max: 480 },
+                    height: { ideal: 240, max: 360 }
                 },
                 audio: false
             };
@@ -67,8 +71,8 @@ class MorseDecoder {
                 const frontConstraints = {
                     video: {
                         facingMode: 'user',
-                        width: { ideal: 640, max: 800 },
-                        height: { ideal: 480, max: 600 }
+                        width: { ideal: 320, max: 480 },
+                        height: { ideal: 240, max: 360 }
                     },
                     audio: false
                 };
@@ -84,7 +88,8 @@ class MorseDecoder {
             this.canvas.width = this.video.videoWidth;
             this.canvas.height = this.video.videoHeight;
             
-            this.status.textContent = '摄像头已就绪，可以开始检测';
+            this.updateCameraInfo();
+            this.status.textContent = `摄像头已就绪，可以开始检测`;
             this.startBtn.textContent = '关闭摄像头';
             this.startBtn.onclick = () => this.stopCamera();
             this.startBtn.disabled = false;
@@ -191,11 +196,18 @@ class MorseDecoder {
             }
         }
         
+        this.frameCount++;
+        const now = Date.now();
+        if (now - this.lastFpsTime >= 1000) {
+            this.currentFps = Math.round(this.frameCount * 1000 / (now - this.lastFpsTime));
+            this.frameCount = 0;
+            this.lastFpsTime = now;
+            this.updateCameraInfo();
+        }
+        
         this.status.textContent = `检测中... 亮度: ${Math.round(avgBrightness)} (${isLightOn ? '亮' : '暗'})`;
         
-        setTimeout(() => {
-            this.animationFrame = requestAnimationFrame(() => this.detectLED());
-        }, 50);
+        this.animationFrame = requestAnimationFrame(() => this.detectLED());
     }
     
     processRealtimeSignals() {
@@ -320,8 +332,17 @@ class MorseDecoder {
         this.currentLetter = '';
         this.realtimeMorse = '';
         this.processingBuffer = [];
+        this.frameCount = 0;
+        this.lastFpsTime = Date.now();
+        this.currentFps = 0;
         this.morseOutput.textContent = '莫斯电码将显示在这里';
         this.textOutput.textContent = '解码文本将显示在这里';
+    }
+    
+    updateCameraInfo() {
+        if (this.cameraInfo && this.video.videoWidth) {
+            this.cameraInfo.textContent = `分辨率: ${this.video.videoWidth}x${this.video.videoHeight} | 帧率: ${this.currentFps} FPS`;
+        }
     }
     
     cleanup() {
