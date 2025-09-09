@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>莫斯电码解析器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+            padding: 10px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        
+        .video-container {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+            margin: 0 auto 20px;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #000;
+        }
+        
+        #video {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        
+        .detection-area {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 40px;
+            height: 40px;
+            border: 2px solid #00ff00;
+            border-radius: 50%;
+            pointer-events: none;
+        }
+        
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            flex: 1;
+            min-width: 100px;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .primary-btn {
+            background: #007AFF;
+            color: white;
+        }
+        
+        .primary-btn:hover {
+            background: #0056CC;
+        }
+        
+        .primary-btn:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        
+        .secondary-btn {
+            background: #333;
+            color: white;
+            border: 1px solid #555;
+        }
+        
+        .secondary-btn:hover {
+            background: #444;
+        }
+        
+        .status {
+            text-align: center;
+            padding: 10px;
+            border-radius: 6px;
+            background: #333;
+            font-size: 14px;
+        }
+        
+        .status.active {
+            background: #2D5016;
+            color: #9ACD32;
+        }
+        
+        .output {
+            background: #2a2a2a;
+            border-radius: 6px;
+            padding: 15px;
+            min-height: 100px;
+        }
+        
+        .morse-display {
+            font-family: 'Courier New', monospace;
+            font-size: 18px;
+            margin-bottom: 10px;
+            min-height: 25px;
+            color: #00ff00;
+        }
+        
+        .text-output {
+            font-size: 16px;
+            min-height: 25px;
+            color: #fff;
+        }
+        
+        .settings {
+            background: #333;
+            border-radius: 6px;
+            padding: 15px;
+        }
+        
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .setting-row:last-child {
+            margin-bottom: 0;
+        }
+        
+        .setting-row label {
+            font-size: 14px;
+            flex: 1;
+        }
+        
+        .setting-row input {
+            width: 80px;
+            padding: 5px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: #2a2a2a;
+            color: #fff;
+            text-align: center;
+        }
+        
+        canvas {
+            display: none;
+        }
+        
+        @media (max-width: 600px) {
+            body {
+                padding: 5px;
+            }
+            
+            .header h1 {
+                font-size: 20px;
+            }
+            
+            .button-group {
+                flex-direction: column;
+            }
+            
+            button {
+                min-width: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>莫斯电码解析器</h1>
+        <p>将摄像头对准闪烁的LED灯进行解码</p>
+    </div>
+    
+    <div class="video-container">
+        <video id="video" autoplay playsinline></video>
+        <div class="detection-area"></div>
+    </div>
+    
+    <div class="controls">
+        <div class="button-group">
+            <button id="startBtn" class="primary-btn">开启摄像头</button>
+            <button id="detectBtn" class="secondary-btn" disabled>开始检测</button>
+            <button id="clearBtn" class="secondary-btn">清除结果</button>
+        </div>
+        
+        <div id="status" class="status">等待开启摄像头...</div>
+        
+        <div class="output">
+            <div class="morse-display" id="morseOutput">莫斯电码将显示在这里</div>
+            <div class="text-output" id="textOutput">解码文本将显示在这里</div>
+        </div>
+        
+        <div class="settings">
+            <h3 style="margin-bottom: 15px;">检测设置</h3>
+            <div class="setting-row">
+                <label for="threshold">亮度阈值:</label>
+                <input type="number" id="threshold" value="150" min="50" max="255">
+            </div>
+            <div class="setting-row">
+                <label for="dotLength">点的时长(ms):</label>
+                <input type="number" id="dotLength" value="80" min="50" max="1000">
+            </div>
+            <div class="setting-row">
+                <label for="sensitivity">检测灵敏度:</label>
+                <input type="number" id="sensitivity" value="10" min="1" max="50">
+            </div>
+        </div>
+    </div>
+    
+    <canvas id="canvas"></canvas>
+    
+    <script src="morse-decoder.js"></script>
+</body>
+</html>
