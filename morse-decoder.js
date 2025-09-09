@@ -26,6 +26,8 @@ class MorseDecoder {
         this.frameCount = 0;
         this.lastFpsTime = Date.now();
         this.currentFps = 0;
+        this.imageDataCache = null;
+        this.maxLightStates = 1000;
         
         this.morseTable = {
             '.-': 'A', '-...': 'B', '-.-.': 'C', '-..': 'D', '.': 'E',
@@ -167,6 +169,11 @@ class MorseDecoder {
         this.processingBuffer = [];
         this.lastUpdateTime = Date.now();
         this.stateStartTime = Date.now();
+        this.frameCount = 0;
+        this.lastFpsTime = Date.now();
+        if (this.imageDataCache) {
+            this.imageDataCache = null;
+        }
         this.detectLED();
     }
     
@@ -179,6 +186,10 @@ class MorseDecoder {
         if (this.animationFrame) {
             cancelAnimationFrame(this.animationFrame);
             this.animationFrame = null;
+        }
+        
+        if (this.imageDataCache) {
+            this.imageDataCache = null;
         }
         
         this.processDetectedSignals();
@@ -194,15 +205,27 @@ class MorseDecoder {
         const radius = parseInt(document.getElementById('sensitivity').value);
         const threshold = parseInt(document.getElementById('threshold').value);
         
+        const diameter = radius * 2;
+        if (!this.imageDataCache) {
+            this.imageDataCache = this.ctx.getImageData(centerX - radius, centerY - radius, diameter, diameter);
+        } else {
+            this.ctx.getImageData(centerX - radius, centerY - radius, diameter, diameter, this.imageDataCache);
+        }
+        
         let totalBrightness = 0;
         let pixelCount = 0;
+        const data = this.imageDataCache.data;
         
         const step = 2;
-        for (let x = centerX - radius; x <= centerX + radius; x += step) {
-            for (let y = centerY - radius; y <= centerY + radius; y += step) {
-                if ((x - centerX) ** 2 + (y - centerY) ** 2 <= radius ** 2) {
-                    const imageData = this.ctx.getImageData(x, y, 1, 1);
-                    const [r, g, b] = imageData.data;
+        for (let x = 0; x < diameter; x += step) {
+            for (let y = 0; y < diameter; y += step) {
+                const dx = x - radius;
+                const dy = y - radius;
+                if (dx * dx + dy * dy <= radius * radius) {
+                    const index = (y * diameter + x) * 4;
+                    const r = data[index];
+                    const g = data[index + 1];
+                    const b = data[index + 2];
                     const brightness = (r + g + b) / 3;
                     totalBrightness += brightness;
                     pixelCount++;
@@ -221,6 +244,13 @@ class MorseDecoder {
             if (lastState.state !== isLightOn) {
                 lastState.duration = currentTime - lastState.startTime;
                 this.lightStates.push({ state: isLightOn, startTime: currentTime });
+                
+                if (this.lightStates.length > this.maxLightStates) {
+                    this.lightStates = this.lightStates.slice(-this.maxLightStates / 2);
+                    this.realtimeMorse = '';
+                    this.currentLetter = '';
+                }
+                
                 this.processRealtimeSignals();
             }
         }
@@ -364,6 +394,9 @@ class MorseDecoder {
         this.frameCount = 0;
         this.lastFpsTime = Date.now();
         this.currentFps = 0;
+        if (this.imageDataCache) {
+            this.imageDataCache = null;
+        }
         this.morseOutput.textContent = '莫斯电码将显示在这里';
         this.textOutput.textContent = '解码文本将显示在这里';
     }
@@ -385,6 +418,9 @@ class MorseDecoder {
     }
     
     cleanup() {
+        if (this.imageDataCache) {
+            this.imageDataCache = null;
+        }
         this.stopCamera();
     }
 }
